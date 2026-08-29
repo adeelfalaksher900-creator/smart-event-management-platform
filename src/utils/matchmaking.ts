@@ -1,5 +1,6 @@
 /**
- * Smart Team Matchmaking Logic
+ * @file matchmaking.ts
+ * @description Smart Matchmaking Algorithm for Team Formation
  */
 
 export interface MatchCandidate {
@@ -10,83 +11,117 @@ export interface MatchCandidate {
   projectInterests: string[];
 }
 
+export interface MatchResult {
+  score: number;
+  sharedSkills: string[];
+  complementarySkills: boolean;
+  sharedInterests: string[];
+  suggestedRole: string;
+  reasons: string[];
+}
+
 /**
- * Calculates a match score between 0-100 based on the specified weights:
- * Skill Compatibility: 40%
- * Role Complementarity: 25%
- * Project Interest: 20%
- * Experience: 10%
- * Collaboration/Profile Fit: 5% (Base/Bonus)
+ * Calculates a deterministic compatibility score between two participants.
+ *
+ * @param {MatchCandidate} currentUser - The participant requesting matches.
+ * @param {MatchCandidate} candidate - The candidate being evaluated.
+ * @returns {MatchResult} A normalized score and explainable match factors.
  */
 export function calculateMatchScore(
-  seeker: MatchCandidate,
+  currentUser: MatchCandidate,
   candidate: MatchCandidate
-): { score: number; reasons: string[] } {
-  let score = 0;
+): MatchResult {
   const reasons: string[] = [];
+  
+  // Safe extraction to prevent crashes on missing data
+  const currentUserSkills = currentUser.skills || [];
+  const candidateSkills = candidate.skills || [];
+  const currentUserInterests = currentUser.projectInterests || [];
+  const candidateInterests = candidate.projectInterests || [];
+  const currentUserRole = currentUser.role || 'Any';
+  const candidateRole = candidate.role || 'Any';
+  const currentUserExp = currentUser.experience || 3;
+  const candidateExp = candidate.experience || 3;
+
+  // Edge cases
+  if (currentUser.id === candidate.id) {
+    return { score: 0, sharedSkills: [], complementarySkills: false, sharedInterests: [], suggestedRole: "", reasons: ["Same participant"] };
+  }
+
+  let rawScore = 0;
 
   // 1. Skill Compatibility (40%)
-  // Find complementary skills rather than exact overlap if roles are different,
-  // or exact overlap if roles are the same. For simplicity, we calculate shared/complementary.
-  const seekerSkills = new Set(seeker.skills.map(s => s.toLowerCase()));
-  const candidateSkills = new Set(candidate.skills.map(s => s.toLowerCase()));
+  const set1 = new Set(currentUserSkills.map(s => s.toLowerCase()));
+  const set2 = new Set(candidateSkills.map(s => s.toLowerCase()));
   
-  let sharedSkills = 0;
-  candidateSkills.forEach(skill => {
-    if (seekerSkills.has(skill)) sharedSkills++;
+  const sharedSkills: string[] = [];
+  set2.forEach(skill => {
+    if (set1.has(skill)) {
+      sharedSkills.push(skill);
+    }
   });
-  
-  if (sharedSkills > 0) {
-    // Both have similar technical context
-    const skillScore = Math.min((sharedSkills / Math.max(seekerSkills.size, 1)) * 40, 40);
-    score += skillScore;
-    if (skillScore > 20) {
-      reasons.push(`Strong skill alignment (${sharedSkills} shared tools)`);
+
+  let complementarySkills = false;
+  if (sharedSkills.length > 0) {
+    const skillScore = Math.min((sharedSkills.length / Math.max(set1.size, 1)) * 40, 40);
+    rawScore += skillScore;
+    if (skillScore >= 20) {
+      reasons.push(`Strong skill alignment (${sharedSkills.length} shared tools)`);
     }
   } else {
-    // Complementary stack assumption if they don't overlap much
-    score += 20; // Base score for diverse stack
-    reasons.push("Complementary technical stack");
+    // If no shared skills, assume complementary if they have distinct skills
+    if (set1.size > 0 && set2.size > 0) {
+      rawScore += 20; 
+      complementarySkills = true;
+      reasons.push("Complementary technical stack");
+    }
   }
 
   // 2. Role Complementarity (25%)
-  if (seeker.role !== candidate.role) {
-    score += 25;
-    reasons.push(`${candidate.role} complements your ${seeker.role} role`);
-  } else {
-    score += 10;
-    reasons.push(`Shared focus in ${seeker.role}`);
+  if (currentUserRole !== candidateRole && currentUserRole !== 'Any' && candidateRole !== 'Any') {
+    rawScore += 25;
+    reasons.push(`${candidateRole} complements your ${currentUserRole} role`);
+  } else if (currentUserRole === candidateRole) {
+    rawScore += 10;
+    reasons.push(`Shared focus in ${currentUserRole}`);
   }
 
   // 3. Project Interest Similarity (20%)
-  const seekerInterests = new Set(seeker.projectInterests.map(i => i.toLowerCase()));
-  let sharedInterests = 0;
-  candidate.projectInterests.forEach(interest => {
-    if (seekerInterests.has(interest.toLowerCase())) sharedInterests++;
+  const int1 = new Set(currentUserInterests.map(i => i.toLowerCase()));
+  const sharedInterests: string[] = [];
+  candidateInterests.forEach(interest => {
+    if (int1.has(interest.toLowerCase())) {
+      sharedInterests.push(interest);
+    }
   });
-  
-  if (sharedInterests > 0) {
-    score += 20;
-    reasons.push("Shared project interests");
+
+  if (sharedInterests.length > 0) {
+    rawScore += 20;
+    reasons.push(`Shared project interests (${sharedInterests.join(', ')})`);
   }
 
   // 4. Experience Compatibility (10%)
-  // Prefer similar experience levels
-  const expDiff = Math.abs(seeker.experience - candidate.experience);
+  const expDiff = Math.abs(currentUserExp - candidateExp);
   if (expDiff <= 1) {
-    score += 10;
+    rawScore += 10;
     reasons.push("Similar experience level");
   } else if (expDiff === 2) {
-    score += 5;
+    rawScore += 5;
     reasons.push("Balanced mentorship potential");
   }
 
   // 5. Collaboration Fit (5%)
-  // Base bonus for completeness
-  score += 5;
+  rawScore += 5; // Base completeness
+
+  // Normalize
+  const finalScore = Math.min(Math.round(rawScore), 100);
 
   return {
-    score: Math.min(Math.round(score), 100),
+    score: finalScore,
+    sharedSkills,
+    complementarySkills,
+    sharedInterests,
+    suggestedRole: candidateRole,
     reasons
   };
 }
